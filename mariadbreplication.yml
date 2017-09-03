@@ -1,0 +1,65 @@
+---
+- hosts : dbservers
+  tasks:
+      - name: Adding MariaDB Repo on both Master and Slave
+        yum_repository:
+               name: MariaDB
+               description: EPEL YUM repo
+               file: external_repos
+               baseurl: http://yum.mariadb.org/10.0/centos7-amd64
+               gpgkey: https://yum.mariadb.org/RPM-GPG-KEY-MariaDB
+               gpgcheck: yes
+      - name: Installing MriaDB on both Master and slave
+        yum: name={{item}} state=present
+        with_items:
+              - MariaDB-server
+              - MariaDB-client
+              - MySQL-python
+#Configuring MASTER
+              
+- hosts: centos1
+  tasks:
+      - name: Configure MariaDB Master 
+        lineinfile:
+               path: /etc/my.cnf.d/server.cnf
+               line: "{{ item }}"
+               insertafter: '\[mysqld\]'
+        with_items:
+              - 'server_id=1'
+              - 'log-bin=mysql-bin'
+              - 'binlog-format=row'
+        notify: restart MariaDB service
+
+      - name: Create a Slave User and Password
+        mysql_user:
+                     name: "{{ item }}"
+                     password: passwd
+                     priv: '*.*:ALL'
+                     state: present
+        with_items:
+                  - 'salve-01'
+      - name: Stop Slave
+        command: mysql -e "{{ item }};"
+        with_items:
+                  - STOP SLAVE
+                  - GRANT REPLICATION SLAVE ON *.* TO 'slave-01'@'Your_Slave_DB_Server_IP' IDENTIFIED BY 'passwd'
+                  - FLUSH PRIVILEGES
+                  - FLUSH TABLES WITH READ LOCK
+      - name: Show Master Status
+        command: mysql -e 'SHOW MASTER STATUS'
+        register: master_status
+      - name: Taking MySQL Dump of all databases
+        mysql_db:
+            state: dump
+            name: all
+            target: /tmp/dump.sql
+
+      - debug: msg="{{ master_status.stdout_lines }}"
+      - name: Verify Mysql service is Listening
+        wait_for: port=3306 state=drained timeout=1
+  handlers:
+      - name: restart MariaDB service
+        service: name=mysql state=restarted
+#Configuring Slave
+#- hosts: CentOS-2
+#  tasks:
